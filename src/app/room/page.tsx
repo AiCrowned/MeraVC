@@ -1,6 +1,7 @@
 'use client';
-import { useEffect, useRef, useState, use } from 'react';
-import { useRouter } from 'next/navigation';
+
+import { useEffect, useRef, useState, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { motion } from 'framer-motion';
 import {
     Mic, MicOff, Video, VideoOff,
@@ -11,10 +12,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useWebRTC } from '@/contexts/WebRTCContext';
 import { useRoom } from '@/hooks/useFirestore';
 
-export default function RoomPage({ params }: { params: Promise<{ roomId: string }> }) {
-    const unwrappedParams = use(params);
-    const roomId = unwrappedParams.roomId;
-
+function RoomContent() {
+    const searchParams = useSearchParams();
+    const roomId = searchParams.get('id');
     const router = useRouter();
     const { user } = useAuth();
 
@@ -33,7 +33,7 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
         connectToPeer
     } = useWebRTC();
 
-    const { room, joinRoom, leaveRoom, updateParticipantStatus } = useRoom(roomId);
+    const { room, joinRoom, leaveRoom, updateParticipantStatus, messages, sendMessage } = useRoom(roomId || '');
 
     const localVideoRef = useRef<HTMLVideoElement>(null);
     const [showParticipants, setShowParticipants] = useState(false);
@@ -42,6 +42,10 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
     useEffect(() => {
         if (!user) {
             router.push('/auth');
+            return;
+        }
+        if (!roomId) {
+            router.push('/dashboard');
             return;
         }
 
@@ -53,7 +57,7 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
                 leaveRoom(roomId, user.uid);
             }
         };
-    }, [user]);
+    }, [user, roomId]);
 
     useEffect(() => {
         if (localStream && localVideoRef.current) {
@@ -62,7 +66,7 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
     }, [localStream]);
 
     useEffect(() => {
-        if (user && room && localStream) {
+        if (user && room && localStream && roomId) {
             const participant = {
                 uid: user.uid,
                 displayName: user.displayName || 'Anonymous',
@@ -73,24 +77,21 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
                 isVideoOff: !isVideoEnabled
             };
 
-            // Only join if not already in participants list to avoid loops/duplicates if implemented that way
-            // But typically we update presence
             const isAlreadyParticipant = room.participants?.some(p => p.uid === user.uid);
             if (!isAlreadyParticipant) {
                 joinRoom(roomId, participant);
             }
 
-            // Connect to existing participants
             room.participants?.forEach((p) => {
                 if (p.uid !== user.uid) {
                     connectToPeer(p.peerId);
                 }
             });
         }
-    }, [user, room, localStream]);
+    }, [user, room, localStream, roomId]);
 
     const handleLeaveCall = async () => {
-        if (user && room) {
+        if (user && room && roomId) {
             await leaveRoom(roomId, user.uid);
             cleanupMedia();
             router.push('/dashboard');
@@ -99,26 +100,23 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
 
     const handleToggleAudio = () => {
         toggleAudio();
-        if (user && room) {
+        if (user && room && roomId) {
             updateParticipantStatus(roomId, user.uid, {
-                isMuted: isAudioEnabled // Note: isAudioEnabled is the OLD value before toggle? 
-                // Logic in useWebRTC updates state, but React batching means we might send old value if not careful.
-                // Ideally pass the !isAudioEnabled or wait for effect. 
-                // For now trusting the context toggle updates immediately or we invert here.
-                // Actually context toggle updates state asynchronously. 
-                // Pass !isAudioEnabled for safety if sending immediately.
+                isMuted: isAudioEnabled
             });
         }
     };
 
     const handleToggleVideo = () => {
         toggleVideo();
-        if (user && room) {
+        if (user && room && roomId) {
             updateParticipantStatus(roomId, user.uid, {
                 isVideoOff: isVideoEnabled
             });
         }
     };
+
+    if (!roomId) return null;
 
     return (
         <div className="h-screen bg-gray-900 flex flex-col">
@@ -236,7 +234,7 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
 
                         {/* Chat */}
                         {showChat && (
-                            <ChatPanel roomId={roomId} user={user} />
+                            <ChatPanel messages={messages} sendMessage={sendMessage} roomId={roomId} user={user} />
                         )}
                     </motion.div>
                 )}
@@ -336,8 +334,7 @@ function RemoteVideo({ peerId, stream }: { peerId: string; stream: MediaStream }
     );
 }
 
-function ChatPanel({ roomId, user }: { roomId: string; user: any }) {
-    const { messages, sendMessage } = useRoom(roomId);
+function ChatPanel({ roomId, user, messages, sendMessage }: { roomId: string; user: any; messages: any[]; sendMessage: any }) {
     const [newMessage, setNewMessage] = useState('');
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -392,5 +389,13 @@ function ChatPanel({ roomId, user }: { roomId: string; user: any }) {
                 </button>
             </form>
         </div>
+    );
+}
+
+export default function RoomPage() {
+    return (
+        <Suspense fallback={<div className="h-screen bg-gray-900 flex items-center justify-center text-white">Loading Room...</div>}>
+            <RoomContent />
+        </Suspense>
     );
 }

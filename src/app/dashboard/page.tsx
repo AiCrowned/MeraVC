@@ -26,7 +26,7 @@ export default function Dashboard() {
                 user.displayName || 'Anonymous',
                 roomName
             );
-            router.push(`/room/${roomId}`);
+            router.push(`/room?id=${roomId}`);
         } catch (error) {
             console.error('Error creating room:', error);
         } finally {
@@ -43,7 +43,7 @@ export default function Dashboard() {
         try {
             const exists = await checkRoomExists(roomCode.trim());
             if (exists) {
-                router.push(`/room/${roomCode.trim()}`);
+                router.push(`/room?id=${roomCode.trim()}`);
             } else {
                 setJoinError('Room not found. Please check the code.');
             }
